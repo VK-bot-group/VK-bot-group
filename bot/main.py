@@ -8,17 +8,35 @@ class VKBot:
     def __init__(self):
         load_dotenv()
         token = os.getenv("TOKEN")
+        if not token:
+            raise ValueError("Токен не найден в переменных окружения!")
+
         self.vk_session = vk_api.VkApi(token)
         self.vk = self.vk_session.get_api()
         self.vk_poll = VkLongPoll(self.vk_session)
-        #self.handler = "Взять из файла handlers"
+        self.handlers = {}
+
+    def register_handler(self, command):
+        """Декоратор для регистрации обработчиков."""
+        def wrapper(func):
+            self.handlers[command] = func
+            return func
+        return wrapper
+
+    def handle_message(self, event):
+        text = event.text.lower()
+        if text in self.handlers:
+            self.handlers[text](self, event)
+        else:
+            print(f"Неизвестная команда: {text}")
 
     def run(self):
-        for event in self.vk_poll.listen():
-            if event.type == VkEventType.MESSAGE_NEW and event.to_me:
-                user_id = event.user_id
-                message = event.text
-                #self.handler.handle_message(user_id, message, self.vk)
+        try:
+            for event in self.vk_poll.listen():
+                if event.type == VkEventType.MESSAGE_NEW and event.to_me:
+                    self.handle_message(event)
+        except Exception as e:
+            print(f"Произошла ошибка: {e}")
 
 
 if __name__ == "__main__":
