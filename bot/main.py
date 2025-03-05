@@ -27,6 +27,25 @@ class VKBot:
             message=f"Вы набрали {text}, но я не знаю эту команду",
             random_id=random_id
         )
+    
+    def user_info_handler(self,event):
+        user_id=event.object.message['from_id']
+        user_info = self.vk.users.get(user_ids=user_id, fields='first_name,last_name,photo_100,bdate')
+        
+        random_id = random.randint(1, 2 ** 31)
+        
+        first_name = user_info[0]['first_name']
+        last_name = user_info[0]['last_name']
+        photo_url = user_info[0]['photo_100']
+        bdate = user_info[0]['bdate']
+
+        self.vk.messages.send(
+            user_id=event.object.message['from_id'],
+            message=f"Информация о вас: {first_name} {last_name}\nСсылка на фото: {photo_url}\nДата рождения:{bdate}",
+            random_id=random_id
+        )
+
+
 
     def __init__(self):
         load_dotenv()
@@ -38,7 +57,7 @@ class VKBot:
         self.vk_session = vk_api.VkApi(token=token)
         self.vk = self.vk_session.get_api()
         self.vk_poll = VkBotLongPoll(self.vk_session, group_id)
-        self.handlers = {'help':self.help_handler}
+        self.handlers = {'help':self.help_handler,'info':self.user_info_handler}
         
    
     def handle_message(self, event):
