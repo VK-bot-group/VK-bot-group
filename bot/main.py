@@ -1,6 +1,7 @@
 import vk_api
 import os
 from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
+
 from dotenv import load_dotenv
 import random
 
@@ -11,9 +12,12 @@ class VKBot:
         
         random_id = random.randint(1, 2 ** 31)
 
+        command_str = ", ".join([key for key,val in self.handlers.items()])
+
+
         self.vk.messages.send(
             user_id=event.object.message['from_id'],
-            message="Вот список команд!",
+            message=f"Cписок команд:\n{command_str}",
             random_id=random_id
         )
 
@@ -57,7 +61,11 @@ class VKBot:
         self.vk_session = vk_api.VkApi(token=token)
         self.vk = self.vk_session.get_api()
         self.vk_poll = VkBotLongPoll(self.vk_session, group_id)
-        self.handlers = {'help':self.help_handler,'info':self.user_info_handler}
+        self.handlers = {
+                        'help':self.help_handler,
+                        'me':self.user_info_handler
+
+                        }
         
    
     def handle_message(self, event):
