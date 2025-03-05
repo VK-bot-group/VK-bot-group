@@ -3,6 +3,7 @@ from vk_api.keyboard import VkKeyboard, VkKeyboardColor
 
 class KeyboardBuilder:
     """Метод создания клавиатуры."""
+
     def __init__(self):
         self.keyboard = VkKeyboard(one_time=True)
 
