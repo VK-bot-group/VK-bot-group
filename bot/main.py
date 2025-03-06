@@ -55,7 +55,7 @@ class VKBot:
         )
 
     def get_photos(self, event):
-        """Получение трех фото с наибольшими лайками. Список из 3."""
+        """Получение трех фото с наибольшими лайками. Список из 3 url."""
         user_id = event.object.message['from_id']
         photos = self.vk.photos.get(owner_id=user_id, album_id="profile", extended=1)['items']
         if not photos:
