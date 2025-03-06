@@ -9,19 +9,26 @@ import random
 class VKBot:
     def __init__(self):
         load_dotenv()
-        token = os.getenv("TOKEN")
+        # Токен бота.
+        token_bot = os.getenv("TOKEN_BOT")
         group_id = os.getenv("GROUP_ID")
-        if not token:
+        # Персональный токен ВК.
+        token_user = os.getenv("TOKEN_USER")
+        if not token_bot or not token_user:
             raise ValueError("Токен не найден в переменных окружения!")
 
-        self.vk_session = vk_api.VkApi(token=token)
+        # Авторизация через токен бота.
+        self.vk_session = vk_api.VkApi(token=token_bot)
         self.vk = self.vk_session.get_api()
         self.vk_poll = VkBotLongPoll(self.vk_session, group_id)
         self.handlers = {
             'help': self.help_handler,
             'me': self.user_info_handler
-
         }
+
+        # Авторизация через персональный токен.
+        self.vk_user = vk_api.VkApi(token=token_user)
+        self.vk_u = self.vk_user.get_api()
 
     def help_handler(self, event):
         """Обработчик для команды 'помощь'"""
@@ -49,20 +56,49 @@ class VKBot:
 
     def user_info_handler(self, event):
         user_id = event.object.message['from_id']
-        user_info = self.vk.users.get(user_ids=user_id, fields='first_name,last_name,photo_100,bdate')
+        user_info = self.vk_u.users.get(user_ids=user_id, fields="first_name, last_name, photo_100, bdate")
 
         random_id = random.randint(1, 2 ** 31)
 
         first_name = user_info[0]['first_name']
         last_name = user_info[0]['last_name']
         photo_url = user_info[0]['photo_100']
-        bdate = user_info[0]['bdate']
+        bdate = user_info[0].get('bdate', 'Не указана ')
 
         self.vk.messages.send(
-            user_id=event.object.message['from_id'],
+            user_id=user_id,
             message=f"Информация о вас: {first_name} {last_name}\nСсылка на фото: {photo_url}\nДата рождения:{bdate}",
             random_id=random_id
         )
+
+    def get_photos(self, event):
+        """ Получение трех фото с наибольшими лайками. Список из 3. """
+        user_id = event.object.message['from_id']
+        photos = self.vk.photos.get(owner_id=user_id, album_id="profile", extended=1)['items']
+        if not photos:
+            return "Фото в профиле отсутствуют"
+
+        top_photos = sorted(photos, key=lambda x: x['likes']['count'], reverse=True)[:3]
+        top_photo_urls = [max(photo['sizes'], key=lambda s: s['height'] * s['width'])['url'] for photo in top_photos]
+
+        return top_photo_urls
+
+    def start_handler(self, event):
+        user_id = event.object.message['from_id']
+        user_info = self.vk_u.users.get(user_ids=user_id)
+        random_id = random.randint(1, 2 ** 31)
+
+        self.vk.message.send(
+            user_id=user_id,
+            message=f"Привет! Я бот для знакомств в VK!",
+            random_id=random_id
+        )
+
+    def next_handler(self):
+        pass
+
+    def save(self):
+        pass
 
     def handle_message(self, event):
         text = event.object.message['text']
@@ -74,6 +110,7 @@ class VKBot:
             print(f"Неизвестная команда: {text}")
 
     def run(self):
+        print("Bot is Running")
         try:
             for event in self.vk_poll.listen():
                 if event.type == VkBotEventType.MESSAGE_NEW:
