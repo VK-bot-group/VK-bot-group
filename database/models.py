@@ -1,41 +1,50 @@
-from sqlalchemy import Column, Integer, String, ForeignKey, Boolean
+from sqlalchemy import Column, Integer, String, ForeignKey
 from sqlalchemy.orm import relationship
 from database.database import Base
 
 class User(Base):
-    """Модель пользователя"""
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-    vk_id = Column(Integer, unique=True, nullable=False)
-    first_name = Column(String, nullable=False)
-    last_name = Column(String, nullable=False)
-    city = Column(String, nullable=True)
-    sex = Column(Integer, nullable=True)
-    photo_url = Column(String, nullable=True)
+    vk_id = Column(Integer, unique=True, index=True)
+    first_name = Column(String)
+    last_name = Column(String)
+    sex = Column(Integer)  # 1 — мужской, 2 — женский
+    city = Column(String)
+    profile_url = Column(String)
+    age = Column(Integer)
 
+    # Связь с избранными
+    favorites = relationship("FavoriteUser", back_populates="user")
     likes = relationship("Like", back_populates="user")
-    blacklisted = relationship("BlackList", back_populates="user")
+    blacklist = relationship("BlackList", back_populates="user")
+
+class FavoriteUser(Base):
+    __tablename__ = "favorite_users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    favorite_user_id = Column(Integer, ForeignKey("users.id"))
+
+    user = relationship("User", foreign_keys=[user_id], back_populates="favorites")
+    favorite_user = relationship("User", foreign_keys=[favorite_user_id])
 
 class Like(Base):
-    """Модель лайков"""
     __tablename__ = "likes"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    liked_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    mutual = Column(Boolean, default=False)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    liked_user_id = Column(Integer, ForeignKey("users.id"))
 
-    user = relationship("User", Foreign_keys=[user_id])
-    liked_user = relationship("User", Foreign_keys=[liked_user_id])
+    user = relationship("User", foreign_keys=[user_id], back_populates="likes")
+    liked_user = relationship("User", foreign_keys=[liked_user_id])
 
 class BlackList(Base):
-    """Модель чёрного списка"""
     __tablename__ = "blacklist"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    blocked_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    blocked_user_id = Column(Integer, ForeignKey("users.id"))
 
-    user = relationship("User", Foreign_keys=[user_id])
-    blocked_user = relationship("User", Foreign_keys=[blocked_user_id])
+    user = relationship("User", foreign_keys=[user_id], back_populates="blacklist")
+    blocked_user = relationship("User", foreign_keys=[blocked_user_id])
