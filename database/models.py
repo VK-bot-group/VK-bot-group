@@ -15,9 +15,7 @@ class User(Base):
     age = Column(Integer)
 
     # Связь с избранными
-    favorites = relationship("FavoriteUser", back_populates="user")
-    likes = relationship("Like", back_populates="user")
-    blacklist = relationship("BlackList", back_populates="user")
+    favorites = relationship("FavoriteUser", back_populates="user", foreign_keys="[FavoriteUser.user_id]")
 
 class FavoriteUser(Base):
     __tablename__ = "favorite_users"
@@ -36,15 +34,9 @@ class Like(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     liked_user_id = Column(Integer, ForeignKey("users.id"))
 
-    user = relationship("User", foreign_keys=[user_id], back_populates="likes")
-    liked_user = relationship("User", foreign_keys=[liked_user_id])
-
 class BlackList(Base):
     __tablename__ = "blacklist"
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     blocked_user_id = Column(Integer, ForeignKey("users.id"))
-
-    user = relationship("User", foreign_keys=[user_id], back_populates="blacklist")
-    blocked_user = relationship("User", foreign_keys=[blocked_user_id])
