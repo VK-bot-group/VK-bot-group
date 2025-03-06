@@ -54,25 +54,8 @@ class VKBot:
             random_id=random_id
         )
 
-    def user_info_handler(self, event):
-        user_id = event.object.message['from_id']
-        user_info = self.vk_u.users.get(user_ids=user_id, fields="first_name, last_name, photo_100, bdate")
-
-        random_id = random.randint(1, 2 ** 31)
-
-        first_name = user_info[0]['first_name']
-        last_name = user_info[0]['last_name']
-        photo_url = user_info[0]['photo_100']
-        bdate = user_info[0].get('bdate', 'Не указана ')
-
-        self.vk.messages.send(
-            user_id=user_id,
-            message=f"Информация о вас: {first_name} {last_name}\nСсылка на фото: {photo_url}\nДата рождения:{bdate}",
-            random_id=random_id
-        )
-
     def get_photos(self, event):
-        """ Получение трех фото с наибольшими лайками. Список из 3. """
+        """Получение трех фото с наибольшими лайками. Список из 3."""
         user_id = event.object.message['from_id']
         photos = self.vk.photos.get(owner_id=user_id, album_id="profile", extended=1)['items']
         if not photos:
@@ -82,6 +65,29 @@ class VKBot:
         top_photo_urls = [max(photo['sizes'], key=lambda s: s['height'] * s['width'])['url'] for photo in top_photos]
 
         return top_photo_urls
+
+    def user_info_handler(self, event):
+        user_id = event.object.message['from_id']
+        user_info = self.vk_u.users.get(user_ids=user_id, fields="first_name, last_name, photo_100, bdate")
+
+        random_id = random.randint(1, 2 ** 31)
+
+        first_name = user_info[0]['first_name']
+        last_name = user_info[0]['last_name']
+        photo_url = user_info[0]['photo_100']
+        bdate = user_info[0].get('bdate', 'Не указана')
+
+        top_photos = self.get_photos(event)
+
+        photos_message = "\n".join(top_photos) if isinstance(top_photos, list) else top_photos
+
+        self.vk.messages.send(
+            user_id=user_id,
+            message=f"Информация о вас: {first_name} {last_name}\n"
+                    f"Ссылка на фото: {photos_message}\n"
+                    f"Дата рождения: {bdate}",
+            random_id=random_id
+        )
 
     def start_handler(self, event):
         user_id = event.object.message['from_id']

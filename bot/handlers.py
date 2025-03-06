@@ -3,9 +3,10 @@ from keyboards import KeyboardBuilder
 import random
 
 
-@bot.register_handler("привет")
-def hello_handler(bot, event, keyboard: KeyboardBuilder):
+@bot.register_handler("Начать")
+def hello_handler(bot, event):
     """Обработчик для команды 'привет'"""
+    keyboard = KeyboardBuilder()
     keyboard.add_button("Начать")
     keyboard_markup = keyboard.get_keyboard()
 
@@ -19,9 +20,10 @@ def hello_handler(bot, event, keyboard: KeyboardBuilder):
     )
 
 
-@bot.register_handler("помощь")
-def help_handler(bot, event, keyboard: KeyboardBuilder):
+@bot.register_handler("Помощь")
+def help_handler(bot, event):
     """Обработчик для команды 'помощь'"""
+    keyboard = KeyboardBuilder()
     keyboard.add_button("Помощь")
     keyboard_markup = keyboard.get_keyboard()
 
