@@ -3,7 +3,8 @@ import os
 from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
 
 from dotenv import load_dotenv
-from handlers import help_handler, unknown_handler
+from handlers import Handlers
+import random
 from models import Person
 
 
@@ -47,30 +48,40 @@ class VKBot:
         self.vk_user_api = self.vk_user_session.get_api()
 
         self.handlers = {
-                        'help':help_handler
-                        }
+            "start": Handlers.handle_start,
+            "search": Handlers.handle_search,
+            "help": Handlers.handle_help,
+        }
         
     def find_users(self, city_id, age_from, age_to):
         """Поиск пользователей и отправка результатов."""
-        users = self.vk_search.search_users(city_id, age_from, age_to)
+        users = VkSearch.search_users(city_id, age_from, age_to)
         for user in users:
             print(f"Найден пользователь: {user['first_name']} {user['last_name']}")
 
     def handle_message(self, event):
+        message_text = event.message['text'].lower()
+        user_id = event.message['from_id']
 
-        self.current_person = Person()
-        self.current_person.get_info(self.vk,event.message['from_id'])
-        print(Person)
-        text = event.object.message['text']
-        if text in self.handlers:
-            self.handlers[text](event)
-        else:
-            unknown_handler(event,self.vk_poll)
-            
+        for command, handler in self.handlers.items():
+            if message_text.startswith(command):
+                handler(self, user_id, message_text)  # Передаем self (бот) в обработчик
+                return
+    
+        self.send_message(user_id, 'Неизвестная команда. Наберите help для вывода всех команд')
+
+    def send_message(self, user_id, message):
+        
+        random_id = random.randint(1, 2 ** 31)
+        self.vk_group_api.messages.send(
+            user_id=user_id,
+            message=message,
+            random_id=random_id
+        )
 
     def run(self):
 
-        for event in self.vk_poll.listen():
+        for event in self.vk_group_longpoll.listen():
             if event.type == VkBotEventType.MESSAGE_NEW:
                 self.handle_message(event)
 
