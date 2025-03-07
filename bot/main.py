@@ -79,6 +79,17 @@ class VKBot:
             random_id=random_id,
             keyboard=self.get_keyboard()
         )
+    
+    def unknown_handler(self, event):
+        """Обработчик для неизвестных слов"""
+        
+        random_id = random.randint(1, 2 ** 31)
+        text = event.object.message['text']
+        self.vk.messages.send(
+            user_id=event.object.message['from_id'],
+            message=f"Вы набрали {text}, но я не знаю эту команду",
+            random_id=random_id
+        )
 
     def run(self):
         print("Bot is Running")
@@ -86,7 +97,8 @@ class VKBot:
             if event.type == VkBotEventType.MESSAGE_NEW:
                 if event.object.message["text"].lower() in self.handlers:
                     self.handlers[event.object.message["text"].lower()](event)
-
+                else:
+                    self.unknown_handler(event)
 
 if __name__ == "__main__":
 #    init_db()
