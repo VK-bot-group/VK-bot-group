@@ -7,9 +7,9 @@ class Person:
         self.photo = None
         self.city = 0
     
-    def get_info(self,vk_session, person_id):
+    def get_info(self,vk_object, person_id):
         
-        user_info = vk_session.users.get(user_ids=person_id, fields="first_name, last_name, sex, city, bdate,photo_100")
+        user_info = vk_object.users.get(user_ids=person_id, fields="first_name, last_name, sex, city, bdate,photo_100")
         self.first_name = user_info[0]["first_name"]
         self.last_name = user_info[0]["last_name"]
 
