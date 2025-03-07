@@ -3,8 +3,8 @@ import random
 from dotenv import load_dotenv
 import vk_api
 from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
-from database.database import SessionLocal, init_db
-from utils import search_users, get_top_photos, create_keyboard, send_user_info, send_favorites
+#from database.database import SessionLocal, init_db
+#from utils import search_users, get_top_photos, create_keyboard, send_user_info, send_favorites
 
 
 class VKBot:
@@ -27,9 +27,8 @@ class VKBot:
         self.handlers = {
             "начать": self.start_handler,
             "помощь": self.help_handler,
-            "me": self.user_info_handler,
-            "найти пару": self.find_partner_handler,
-            "избранные": self.favorites_handler,
+            "me": self.user_info_handler
+    
         }
 
     @staticmethod
@@ -37,7 +36,7 @@ class VKBot:
         from vk_api.keyboard import VkKeyboard, VkKeyboardColor
         keyboard = VkKeyboard(one_time=False)
         keyboard.add_button("Найти пару", VkKeyboardColor.POSITIVE)
-        keyboard.add_button("Помощь", VkKeyboardColor.PRIMARY)
+        keyboard.add_button("   ", VkKeyboardColor.PRIMARY)
         keyboard.add_line()
         keyboard.add_button("Избранные", VkKeyboardColor.PRIMARY)
         return keyboard.get_keyboard()
@@ -81,55 +80,6 @@ class VKBot:
             keyboard=self.get_keyboard()
         )
 
-    def find_partner_handler(self, event):
-        user_id = event.object.message["from_id"]
-        session = SessionLocal()
-
-        try:
-            # Получаем информацию о текущем пользователе
-            user_info = self.vk_u.users.get(user_ids=user_id, fields="first_name, last_name, sex")
-            sex = user_info[0]["sex"]
-
-            # Определяем противоположный пол
-            opposite_sex = 1 if sex == 2 else 2
-
-            # Поиск кандидатов с использованием токена пользователя
-            candidates = search_users(self.vk_u, age=25, gender=opposite_sex, city="Москва")
-
-            if candidates:
-                partner = candidates[0]
-                top_photos = get_top_photos(self.vk_u, partner["id"])
-                send_user_info(self.vk_session, user_id, partner, top_photos)
-                self.vk.messages.send(
-                    user_id=user_id,
-                    message="Мэйч!",
-                    random_id=random.randint(1, 2 ** 31),
-                    keyboard=create_keyboard()
-                )
-            else:
-                self.vk.messages.send(
-                    user_id=user_id,
-                    message="Извините, подходящих кандидатов не найдено.",
-                    random_id=random.randint(1, 2 ** 31),
-                    keyboard=self.get_keyboard()
-                )
-        except vk_api.exceptions.ApiError as e:
-            self.vk.messages.send(
-                user_id=user_id,
-                message=f"Ошибка при поиске пары: {e}",
-                random_id=random.randint(1, 2 ** 31),
-                keyboard=self.get_keyboard()
-            )
-
-        session.close()
-
-    def favorites_handler(self, event):
-        """Обработчик команды 'Избранные'"""
-        user_id = event.object.message["from_id"]
-        session = SessionLocal()
-        send_favorites(self.vk_session, user_id, session)
-        session.close()
-
     def run(self):
         print("Bot is Running")
         for event in self.vk_poll.listen():
@@ -139,6 +89,6 @@ class VKBot:
 
 
 if __name__ == "__main__":
-    init_db()
+#    init_db()
     bot = VKBot()
     bot.run()
