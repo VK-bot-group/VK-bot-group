@@ -28,6 +28,7 @@ def search_users(vk_session, age, gender, city):
         print(f"Ошибка при поиске пользователей: {e}")
         return []
 
+
 def get_top_photos(vk_session, user_id):
     vk = vk_session.get_api()
     try:
@@ -38,10 +39,12 @@ def get_top_photos(vk_session, user_id):
         print(f"Ошибка при получении фотографий: {e}")
         return []
 
+
 def create_keyboard():
     keyboard = VkKeyboard(one_time=True)
     keyboard.add_button('Next', color=VkKeyboardColor.PRIMARY)
     return keyboard.get_keyboard()
+
 
 def send_user_info(vk_session, user_id, user_info, photos):
     vk = vk_session.get_api()
@@ -50,9 +53,11 @@ def send_user_info(vk_session, user_id, user_info, photos):
     if not photos:
         message += "\nУ этого пользователя нет фотографий."
     try:
-        vk.messages.send(user_id=user_id, message=message, attachment=attachment, random_id=random.randint(1, 1_000_000))
+        vk.messages.send(user_id=user_id, message=message, attachment=attachment,
+                         random_id=random.randint(1, 1_000_000))
     except Exception as e:
         print(f"Ошибка при отправке информации: {e}")
+
 
 def send_favorites(vk_session, user_id, db):
     favorites = db.query(FavoriteUser).filter(FavoriteUser.user_id == user_id).all()

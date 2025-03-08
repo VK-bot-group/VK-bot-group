@@ -1,29 +1,97 @@
 import os
 import random
+import logging
 from dotenv import load_dotenv
 import vk_api
 from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
-from database.database import SessionLocal, init_db
-from utils import search_users, get_top_photos, create_keyboard, send_user_info, send_favorites
+from database.database import SessionLocal
+from database.models import FavoriteUser
 
+# Настройка логирования
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
 
-class VKBot:
-    def __init__(self):
-        load_dotenv()
-        token_bot = os.getenv("TOKEN_BOT")
-        group_id = os.getenv("GROUP_ID")
-        token_user = os.getenv("TOKEN_USER")
-        if not token_bot or not token_user:
-            raise ValueError("Токен не найден в переменных окружения!")
+load_dotenv()
+token_bot = os.getenv("TOKEN_BOT")
+token_user = os.getenv("TOKEN_USER")
+group_id = os.getenv("GROUP_ID")
 
+if not token_bot or not token_user or not group_id:
+    raise ValueError("Один из токенов или Group ID не найден в переменных окружения!")
+
+class VKApiService:
+    def __init__(self, token_bot, token_user, group_id):
         self.vk_session = vk_api.VkApi(token=token_bot)
         self.vk = self.vk_session.get_api()
         self.vk_poll = VkBotLongPoll(self.vk_session, group_id)
-
         self.vk_user = vk_api.VkApi(token=token_user)
         self.vk_u = self.vk_user.get_api()
 
-        # Регистрация команд
+    def send_message(self, user_id, message, keyboard=None):
+        try:
+            self.vk.messages.send(
+                user_id=user_id,
+                message=message,
+                random_id=random.randint(1, 2 ** 31),
+                keyboard=keyboard
+            )
+        except vk_api.exceptions.ApiError as e:
+            logger.error(f"Ошибка при отправке сообщения: {e}")
+            self.send_message(user_id, "Произошла ошибка при отправке сообщения. Попробуйте позже.")
+
+    def get_user_info(self, user_id):
+        try:
+            return self.vk_u.users.get(user_ids=user_id, fields="first_name,last_name,sex,city")[0]
+        except vk_api.exceptions.ApiError as e:
+            logger.error(f"Ошибка при получении данных: {e}")
+            return None
+
+    def get_city_id(self, city_name):
+        try:
+            response = self.vk_u.database.getCities(q=city_name)
+            if response["count"] > 0:
+                return response["items"][0]["id"]
+            else:
+                return None
+        except vk_api.exceptions.ApiError as e:
+            logger.error(f"Ошибка при получении ID города: {e}")
+            return None
+
+    def search_users(self, age, gender, city_name):
+        city_id = self.get_city_id(city_name)
+        if not city_id:
+            logger.error(f"Город '{city_name}' не найден.")
+            return []
+
+        try:
+            response = self.vk_u.users.search(
+                sex=gender,
+                age_from=age,
+                age_to=age,
+                city=city_id,
+                fields="photo_max,first_name,last_name,city",
+                count=5
+            )
+            return response["items"]
+        except vk_api.exceptions.ApiError as e:
+            logger.error(f"Ошибка при поиске пользователей: {e}")
+            return []
+
+    def get_top_photos(self, user_id):
+        try:
+            photos = self.vk_u.photos.get(owner_id=user_id, album_id='profile', count=10)
+            sorted_photos = sorted(photos.get('items', []), key=lambda x: x.get('likes', {}).get('count', 0),
+                                   reverse=True)
+            return sorted_photos[:3]
+        except Exception as e:
+            logger.error(f"Ошибка при получении фотографий: {e}")
+            return []
+
+
+class VKBot:
+    def __init__(self, vk_api_service, session):
+        self.vk_api_service = vk_api_service
+        self.session = session
         self.handlers = {
             "начать": self.start_handler,
             "помощь": self.help_handler,
@@ -42,103 +110,110 @@ class VKBot:
         keyboard.add_button("Избранные", VkKeyboardColor.PRIMARY)
         return keyboard.get_keyboard()
 
+    @staticmethod
+    def get_inline_keyboard():
+        from vk_api.keyboard import VkKeyboard, VkKeyboardColor
+        keyboard = VkKeyboard(inline=True)
+        keyboard.add_button("Лайк", color=VkKeyboardColor.POSITIVE, payload={"action": "like"})
+        keyboard.add_button("Дизлайк", color=VkKeyboardColor.NEGATIVE, payload={"action": "dislike"})
+        return keyboard.get_keyboard()
+
     def start_handler(self, event):
         user_id = event.object.message["from_id"]
-        random_id = random.randint(1, 2 ** 31)
-        self.vk.messages.send(
-            user_id=user_id,
-            message="Привет! Я бот для знакомств в VK!",
-            random_id=random_id,
-            keyboard=self.get_keyboard()
-        )
+        self.vk_api_service.send_message(user_id, "Привет! Я бот для знакомств в VK!")
 
     def help_handler(self, event):
-        random_id = random.randint(1, 2 ** 31)
-        command_str = ", ".join(self.handlers.keys())
-        self.vk.messages.send(
-            user_id=event.object.message["from_id"],
-            message=f"Список команд:\n{command_str}",
-            random_id=random_id,
-            keyboard=self.get_keyboard()
-        )
+        user_id = event.object.message["from_id"]
+        command_str = "\n".join(self.handlers.keys())
+        self.vk_api_service.send_message(user_id, f"Список команд:\n{command_str}")
 
     def user_info_handler(self, event):
-        """Обработчик команды 'me' - информация о пользователе"""
         user_id = event.object.message["from_id"]
-        try:
-            user_info = self.vk_u.users.get(user_ids=user_id, fields="first_name, last_name, sex")
-            sex = user_info[0]["sex"]
-            message = f"Имя: {user_info[0]['first_name']} {user_info[0]['last_name']}\n"
-            message += f"Пол: {'Мужской' if sex == 2 else 'Женский'}"
-        except vk_api.exceptions.ApiError as e:
-            message = f"Ошибка при получении данных: {e}"
-
-        random_id = random.randint(1, 2 ** 31)
-        self.vk.messages.send(
-            user_id=user_id,
-            message=message,
-            random_id=random_id,
-            keyboard=self.get_keyboard()
-        )
+        user_info = self.vk_api_service.get_user_info(user_id)
+        if user_info:
+            sex = "Мужской" if user_info["sex"] == 2 else "Женский"
+            message = f"Имя: {user_info['first_name']} {user_info['last_name']}\nПол: {sex}"
+        else:
+            message = "Не удалось получить информацию о пользователе."
+        self.vk_api_service.send_message(user_id, message)
 
     def find_partner_handler(self, event):
         user_id = event.object.message["from_id"]
-        session = SessionLocal()
+        user_info = self.vk_api_service.get_user_info(user_id)
+        if user_info:
+            opposite_sex = 1 if user_info["sex"] == 2 else 2
+            city = user_info.get("city", {}).get("title", "Москва")
 
-        try:
-            # Получаем информацию о текущем пользователе
-            user_info = self.vk_u.users.get(user_ids=user_id, fields="first_name, last_name, sex")
-            sex = user_info[0]["sex"]
-
-            # Определяем противоположный пол
-            opposite_sex = 1 if sex == 2 else 2
-
-            # Поиск кандидатов с использованием токена пользователя
-            candidates = search_users(self.vk_u, age=25, gender=opposite_sex, city="Москва")
+            candidates = self.vk_api_service.search_users(age=25, gender=opposite_sex, city_name=city)
 
             if candidates:
                 partner = candidates[0]
-                top_photos = get_top_photos(self.vk_u, partner["id"])
-                send_user_info(self.vk_session, user_id, partner, top_photos)
-                self.vk.messages.send(
-                    user_id=user_id,
-                    message="Мэйч!",
-                    random_id=random.randint(1, 2 ** 31),
-                    keyboard=create_keyboard()
-                )
-            else:
-                self.vk.messages.send(
-                    user_id=user_id,
-                    message="Извините, подходящих кандидатов не найдено.",
-                    random_id=random.randint(1, 2 ** 31),
-                    keyboard=self.get_keyboard()
-                )
-        except vk_api.exceptions.ApiError as e:
-            self.vk.messages.send(
-                user_id=user_id,
-                message=f"Ошибка при поиске пары: {e}",
-                random_id=random.randint(1, 2 ** 31),
-                keyboard=self.get_keyboard()
-            )
+                message = (f"Имя: {partner['first_name']} "
+                           f"{partner['last_name']}\n"
+                           f"Возраст: {partner.get('bdate', 'Не указан')} \n"
+                           f"Город: {partner.get('city', {}).get('title', 'Не указан')}")
 
-        session.close()
+                photos = self.vk_api_service.get_top_photos(partner['id'])
+                self.vk_api_service.send_message(user_id, message, self.get_inline_keyboard())
+                self.send_user_info(user_id, partner, photos)
+            else:
+                self.vk_api_service.send_message(user_id, "Извините, подходящих кандидатов не найдено.")
+        else:
+            self.vk_api_service.send_message(user_id, "Ошибка при поиске пары.")
 
     def favorites_handler(self, event):
-        """Обработчик команды 'Избранные'"""
         user_id = event.object.message["from_id"]
-        session = SessionLocal()
-        send_favorites(self.vk_session, user_id, session)
-        session.close()
+        self.send_favorites(user_id)
+
+    def send_user_info(self, user_id, user_info, photos):
+        attachment = ','.join([f"photo{photo['owner_id']}_{photo['id']}" for photo in photos]) if photos else ''
+        message = f"Имя: {user_info['first_name']} {user_info['last_name']}\nСсылка: https://vk.com/id{user_info['id']}"
+        if not photos:
+            message += "\nУ этого пользователя нет фотографий."
+
+        # Отправляем данные, включая ссылку и фотографии, только после того, как лайкнули
+        try:
+            self.vk_api_service.vk.messages.send(
+                user_id=user_id, message=message, attachment=attachment,
+                random_id=random.randint(1, 1_000_000)
+            )
+        except Exception as e:
+            logger.error(f"Ошибка при отправке информации: {e}")
+
+    def send_favorites(self, user_id):
+        favorites = self.session.query(FavoriteUser).filter(FavoriteUser.user_id == user_id).all()
+        message = "Избранные:\n" + '\n'.join([f"{f.favorite_user.first_name} {f.favorite_user.last_name}: "
+                                              f"https://vk.com/id{f.favorite_user.id}" for f in favorites])
+        self.vk_api_service.send_message(user_id, message or "У вас нет избранных.")
+
+
+    def handle_inline_buttons(self, event):
+        action = event.object.payload["action"]
+        user_id = event.object.message["from_id"]
+
+        if action == "like":
+            self.vk_api_service.send_message(user_id, "Вы поставили лайк! Сейчас покажем фотографии.")
+            # После лайка, показываем фотографии
+            partner_info = self.get_partner_info(user_id)  # Нужно добавить логику получения информации о партнере
+            photos = self.vk_api_service.get_top_photos(partner_info['id'])
+            self.send_user_info(user_id, partner_info, photos)
+        elif action == "dislike":
+            self.vk_api_service.send_message(user_id, "Вы поставили дизлайк. Ищем нового кандидата.")
+            self.find_partner_handler(event)  # Пытаемся найти нового кандидата
 
     def run(self):
         print("Bot is Running")
-        for event in self.vk_poll.listen():
+        for event in self.vk_api_service.vk_poll.listen():
             if event.type == VkBotEventType.MESSAGE_NEW:
-                if event.object.message["text"].lower() in self.handlers:
-                    self.handlers[event.object.message["text"].lower()](event)
+                command = event.object.message["text"].lower()
+                if command in self.handlers:
+                    self.handlers[command](event)
+            elif event.type == VkBotEventType.MESSAGE_EVENT:
+                self.handle_inline_buttons(event)
 
 
 if __name__ == "__main__":
-    init_db()
-    bot = VKBot()
+    vk_api_service = VKApiService(token_bot, token_user, group_id)
+    session = SessionLocal()
+    bot = VKBot(vk_api_service, session)
     bot.run()

@@ -2,6 +2,7 @@ from sqlalchemy import Column, Integer, String, ForeignKey
 from sqlalchemy.orm import relationship
 from database.database import Base
 
+
 class User(Base):
     __tablename__ = "users"
 
@@ -16,6 +17,9 @@ class User(Base):
 
     # Связь с избранными
     favorites = relationship("FavoriteUser", back_populates="user", foreign_keys="[FavoriteUser.user_id]")
+    likes = relationship("Like", back_populates="user", foreign_keys="[Like.user_id]")
+    blacklisted = relationship("BlackList", back_populates="user", foreign_keys="[BlackList.user_id]")
+
 
 class FavoriteUser(Base):
     __tablename__ = "favorite_users"
@@ -27,6 +31,7 @@ class FavoriteUser(Base):
     user = relationship("User", foreign_keys=[user_id], back_populates="favorites")
     favorite_user = relationship("User", foreign_keys=[favorite_user_id])
 
+
 class Like(Base):
     __tablename__ = "likes"
 
@@ -34,9 +39,16 @@ class Like(Base):
     user_id = Column(Integer, ForeignKey("users.id"))
     liked_user_id = Column(Integer, ForeignKey("users.id"))
 
+    user = relationship("User", foreign_keys=[user_id], back_populates="likes")
+    liked_user = relationship("User", foreign_keys=[liked_user_id])
+
+
 class BlackList(Base):
     __tablename__ = "blacklist"
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     blocked_user_id = Column(Integer, ForeignKey("users.id"))
+
+    user = relationship("User", foreign_keys=[user_id], back_populates="blacklisted")
+    blocked_user = relationship("User", foreign_keys=[blocked_user_id])
