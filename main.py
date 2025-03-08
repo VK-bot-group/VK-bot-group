@@ -1,14 +1,13 @@
+import random
+
 import vk_api
-<<<<<<< Updated upstream
 import os
 from vk_api.longpoll import VkLongPoll, VkEventType
 from dotenv import load_dotenv
-=======
 from vk_api import ApiError
 from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
 from database.database import SessionLocal, init_db
 from bot.utils import search_users, get_top_photos, create_keyboard, send_user_info, send_favorites
->>>>>>> Stashed changes
 
 
 class VKBot:
@@ -30,7 +29,7 @@ class VKBot:
             return func
         return wrapper
 
-<<<<<<< Updated upstream
+
     def handle_message(self, event):
         text = event.text.lower()
         if text in self.handlers:
@@ -46,7 +45,7 @@ class VKBot:
         except Exception as e:
             print(f"Произошла ошибка: {e}")
 
-=======
+
         # Регистрация команд
         self.handlers = {
             "начать": self.start_handler,
@@ -255,7 +254,7 @@ class VKBot:
                 text = event.object.message["text"].lower()
                 if text in self.handlers:
                     self.handlers[text](event)
->>>>>>> Stashed changes
+
 
 if __name__ == "__main__":
     bot = VKBot()
