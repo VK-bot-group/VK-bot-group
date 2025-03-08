@@ -1,5 +1,4 @@
 import random
-
 import vk_api
 import os
 from vk_api.longpoll import VkLongPoll, VkEventType
@@ -8,19 +7,42 @@ from vk_api import ApiError
 from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
 from database.database import SessionLocal, init_db
 from bot.utils import search_users, get_top_photos, create_keyboard, send_user_info, send_favorites
+from database.models import FavoriteUser
 
 
 class VKBot:
     def __init__(self):
         load_dotenv()
-        token = os.getenv("TOKEN")
-        if not token:
+        token_bot = os.getenv("TOKEN_BOT")
+        group_id = os.getenv("GROUP_ID")
+        token_user = os.getenv("TOKEN_USER")
+        if not token_bot or not token_user:
             raise ValueError("Токен не найден в переменных окружения!")
 
-        self.vk_session = vk_api.VkApi(token)
+        self.vk_session = vk_api.VkApi(token=token_bot)
         self.vk = self.vk_session.get_api()
-        self.vk_poll = VkLongPoll(self.vk_session)
-        self.handlers = {}
+        self.vk_poll = VkBotLongPoll(self.vk_session, group_id)
+
+        self.vk_user = vk_api.VkApi(token=token_user)
+        self.vk_u = self.vk_user.get_api()
+
+        # Регистрация команд
+        self.handlers = {
+            "начать": self.start_handler,
+            "помощь": self.help_handler,
+            "me": self.user_info_handler,
+            "найти пару": self.find_partner_handler,
+            "избранные": self.favorites_handler,
+            "следующая": self.next_handler,
+            "в избранное": self.add_to_favorites_handler,
+            "в черный список": self.add_to_blacklist_handler,
+        }
+
+        # Текущий кандидат
+        self.current_candidate = None
+
+        # Смещение для поиска
+        self.search_offset = 0
 
     def register_handler(self, command):
         """Декоратор для регистрации обработчиков."""
@@ -114,7 +136,7 @@ class VKBot:
 
         try:
             # Получаем список избранных из базы данных
-            favorites = session.query(Favorite).filter(Favorite.user_id == user_id).all()
+            favorites = session.query(FavoriteUser).filter(FavoriteUser.user_id == user_id).all()
             if favorites:
                 message = "Ваши избранные:\n"
                 for favorite in favorites:
