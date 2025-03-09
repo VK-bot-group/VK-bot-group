@@ -8,6 +8,7 @@ import random
 def search_users(vk_api_user, age: int, gender: int, city_name: str, count: int = 10, offset: int = 0) -> List[Dict]:
     """
     Поиск пользователей по заданным параметрам.
+    Возвращает только открытые профили.
     :param vk_api_user: API для выполнения запросов от имени пользователя.
     :param age: Возраст для поиска.
     :param gender: Пол (1 — женский, 2 — мужской).
@@ -20,7 +21,7 @@ def search_users(vk_api_user, age: int, gender: int, city_name: str, count: int 
         # Получаем ID города по его названию
         city_data = vk_api_user.database.getCities(
             q=city_name,  # Название города
-            count=1       # Ограничиваем результат одним городом
+            count=1  # Ограничиваем результат одним городом
         )
         if not city_data["items"]:
             print(f"Город '{city_name}' не найден.")
@@ -30,16 +31,19 @@ def search_users(vk_api_user, age: int, gender: int, city_name: str, count: int 
 
         # Поиск пользователей
         users = vk_api_user.users.search(
-            age_from=age - 2,
-            age_to=age + 2,
+            age_from=age - 4,
+            age_to=age + 4,
             sex=gender,
             city=city_id,  # Используем ID города
-            has_photo=1,   # Только пользователи с фотографиями
+            has_photo=1,  # Только пользователи с фотографиями
             count=count,
             offset=offset,  # Смещение по списку
-            fields="photo_max_orig,domain,sex"
+            fields="photo_max_orig,domain,sex,is_closed"  # Добавляем поле is_closed
         )
-        return users["items"]
+
+        # Фильтруем только открытые профили
+        open_users = [user for user in users["items"] if not user.get("is_closed", True)]
+        return open_users
     except ApiError as e:
         print(f"Ошибка при поиске пользователей: {e}")
         return []

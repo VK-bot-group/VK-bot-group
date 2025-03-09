@@ -1,4 +1,5 @@
 import random
+from datetime import datetime
 import vk_api
 import os
 from vk_api.longpoll import VkLongPoll, VkEventType
@@ -8,6 +9,35 @@ from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
 from database.database import SessionLocal, init_db
 from bot.utils import search_users, get_top_photos, create_keyboard, send_user_info, send_favorites
 from database.models import FavoriteUser
+
+
+def user_info_decorator(send_message: bool = True):
+    """
+    Декоратор для управления отправкой сообщения с информацией о пользователе.
+    :param send_message: Если True, отправляет сообщение с информацией о пользователе.
+    """
+    def decorator(func):
+        def wrapper(self, event, *args, **kwargs):
+            user_id = event.object.message["from_id"]
+            try:
+                # Получаем информацию о пользователе
+                user_info = self.vk_u.users.get(user_ids=user_id, fields="first_name, last_name, sex, bdate, city")
+                if send_message:
+                    sex = user_info[0]["sex"]
+                    message = f"Имя: {user_info[0]['first_name']} {user_info[0]['last_name']}\n"
+                    message += f"Пол: {'Мужской' if sex == 2 else 'Женский'}"
+                    self.vk.messages.send(
+                        user_id=user_id,
+                        message=message,
+                        random_id=random.randint(1, 2 ** 31),
+                        keyboard=self.get_keyboard()
+                    )
+                return user_info[0]  # Возвращаем данные пользователя
+            except vk_api.exceptions.ApiError as e:
+                print(f"Ошибка при получении данных пользователя: {e}")
+                return None
+        return wrapper
+    return decorator
 
 
 class VKBot:
@@ -30,7 +60,7 @@ class VKBot:
         self.handlers = {
             "начать": self.start_handler,
             "помощь": self.help_handler,
-            "me": self.user_info_handler,
+            "me": self.user_info_handler,  # Отправляет сообщение
             "найти пару": self.find_partner_handler,
             "избранные": self.favorites_handler,
             "следующая": self.next_handler,
@@ -51,7 +81,6 @@ class VKBot:
             return func
         return wrapper
 
-
     def handle_message(self, event):
         text = event.text.lower()
         if text in self.handlers:
@@ -66,25 +95,6 @@ class VKBot:
                     self.handle_message(event)
         except Exception as e:
             print(f"Произошла ошибка: {e}")
-
-
-        # Регистрация команд
-        self.handlers = {
-            "начать": self.start_handler,
-            "помощь": self.help_handler,
-            "я": self.user_info_handler,
-            "найти пару": self.find_partner_handler,
-            "избранные": self.favorites_handler,
-            "следующая": self.next_handler,
-            "в избранное": self.add_to_favorites_handler,
-            "в черный список": self.add_to_blacklist_handler,
-        }
-
-        # Текущий кандидат
-        self.current_candidate = None
-
-        # Смещение для поиска
-        self.search_offset = 0
 
     def start_handler(self, event):
         """
@@ -163,31 +173,26 @@ class VKBot:
         finally:
             session.close()
 
+    @user_info_decorator(send_message=True)
     def user_info_handler(self, event):
         """
         Обработчик команды "me".
         Отправляет информацию о текущем пользователе.
         """
+        return self._get_user_info(event)
+
+    def _get_user_info(self, event):
+        """
+        Внутренний метод для получения информации о пользователе.
+        """
         user_id = event.object.message["from_id"]
         try:
             # Получаем информацию о пользователе
-            user_info = self.vk_u.users.get(user_ids=user_id, fields="first_name, last_name, sex")
-            sex = user_info[0]["sex"]
-            message = f"Имя: {user_info[0]['first_name']} {user_info[0]['last_name']}\n"
-            message += f"Пол: {'Мужской' if sex == 2 else 'Женский'}"
+            user_info = self.vk_u.users.get(user_ids=user_id, fields="first_name, last_name, sex, bdate, city")
+            return user_info[0]  # Возвращаем данные пользователя
         except vk_api.exceptions.ApiError as e:
-            message = f"Ошибка при получении данных: {e}"
-
-        # Отправляем сообщение
-        random_id = random.randint(1, 2 ** 31)
-        self.vk.messages.send(
-            user_id=user_id,
-            message=message,
-            random_id=random_id,
-            keyboard=self.get_keyboard()
-        )
-
-    # Остальные методы класса VKBot...
+            print(f"Ошибка при получении данных пользователя: {e}")
+            return None
 
     def next_handler(self, event):
         """
@@ -239,21 +244,53 @@ class VKBot:
         session = SessionLocal()
 
         try:
-            # Получаем информацию о текущем пользователе
-            user_info = self.vk_u.users.get(user_ids=user_id, fields="first_name, last_name, sex")
-            sex = user_info[0]["sex"]
+            # Получаем информацию о текущем пользователе (без отправки сообщения)
+            user_info = self._get_user_info(event)
+            if not user_info:
+                self.vk.messages.send(
+                    user_id=user_id,
+                    message="Не удалось получить ваши данные. Проверьте настройки приватности.",
+                    random_id=random.randint(1, 2 ** 31)
+                )
+                return
 
-            # Определяем противоположный пол
-            opposite_sex = 1 if sex == 2 else 2
+            # Получаем возраст пользователя
+            bdate = user_info.get("bdate", "")
+            if bdate and len(bdate.split(".")) == 3:  # Проверяем, что дата рождения полная
+                birth_year = int(bdate.split(".")[2])
+                current_year = datetime.now().year
+                age = current_year - birth_year
+            else:
+                age = 25  # Значение по умолчанию, если дата рождения недоступна
 
-            # Поиск кандидатов с использованием смещения
-            candidates = search_users(self.vk_u, age=25, gender=opposite_sex, city_name="Москва",
+            # Получаем пол пользователя
+            sex = user_info.get("sex", 0)  # 1 — женский, 2 — мужской
+            opposite_sex = 1 if sex == 2 else 2  # Ищем противоположный пол
+
+            # Получаем город пользователя
+            city = user_info.get("city", {})
+            city_name = city.get("title", "Москва")  # Значение по умолчанию, если город недоступен
+
+            # Поиск кандидатов с использованием данных пользователя
+            candidates = search_users(self.vk_u, age=age, gender=opposite_sex, city_name=city_name,
                                       offset=self.search_offset)
 
             if candidates:
-                self.current_candidate = candidates[0]  # Сохраняем текущего кандидата
-                top_photos = get_top_photos(self.vk_u, self.current_candidate["id"])
-                send_user_info(self.vk_session, user_id, self.current_candidate, top_photos)
+                # Ищем первого открытого кандидата
+                for candidate in candidates:
+                    if not candidate.get("is_closed", True):
+                        self.current_candidate = candidate  # Сохраняем текущего кандидата
+                        top_photos = get_top_photos(self.vk_u, self.current_candidate["id"])
+                        if top_photos:  # Если фотографии доступны
+                            send_user_info(self.vk_session, user_id, self.current_candidate, top_photos)
+                            break
+                else:
+                    # Если все кандидаты закрыты
+                    self.vk.messages.send(
+                        user_id=user_id,
+                        message="Извините, подходящих кандидатов не найдено.",
+                        random_id=random.randint(1, 2 ** 31)
+                    )
             else:
                 self.vk.messages.send(
                     user_id=user_id,
@@ -265,9 +302,9 @@ class VKBot:
                 user_id=user_id,
                 message=f"Ошибка при поиске пары: {e}",
                 random_id=random.randint(1, 2 ** 31)
-            )
-
-        session.close()
+        )
+        finally:
+            session.close()
 
     def run(self):
         print("Bot is Running")
