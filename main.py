@@ -9,6 +9,7 @@ from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
 from database.database import SessionLocal, init_db
 from bot.utils import search_users, get_top_photos, create_keyboard, send_user_info, send_favorites
 from database.models import FavoriteUser
+from database.database_utils import DatabaseUtils
 
 
 def user_info_decorator(send_message: bool = True):
@@ -56,6 +57,9 @@ class VKBot:
         self.vk_user = vk_api.VkApi(token=token_user)
         self.vk_u = self.vk_user.get_api()
 
+        # Инициализация DatabaseUtils
+        self.db = DatabaseUtils()
+
         # Регистрация команд
         self.handlers = {
             "начать": self.start_handler,
@@ -99,16 +103,40 @@ class VKBot:
     def start_handler(self, event):
         """
         Обработчик команды "начать".
-        Отправляет приветственное сообщение и клавиатуру.
+        Сохраняет пользователя в базу данных и отправляет приветственное сообщение.
         """
         user_id = event.object.message["from_id"]
         random_id = random.randint(1, 2 ** 31)
-        self.vk.messages.send(
-            user_id=user_id,
-            message="Привет! Я бот для знакомств в VK!",
-            random_id=random_id,
-            keyboard=self.get_keyboard()
-        )
+
+        try:
+            # Получаем информацию о пользователе
+            user_info = self.vk_u.users.get(user_ids=user_id, fields="first_name, last_name, sex, city, bdate")[0]
+
+            # Сохраняем пользователя в базу данных
+            self.db.create_user(
+                user_id=user_id,  # Используем ID пользователя ВКонтакте
+                first_name=user_info["first_name"],
+                last_name=user_info["last_name"],
+                sex=user_info.get("sex", 0),
+                city=user_info.get("city", {}).get("title", "Неизвестно"),
+                profile_url=f"https://vk.com/id{user_id}",
+                age=self._calculate_age(user_info.get("bdate", ""))
+            )
+
+            # Отправляем приветственное сообщение
+            self.vk.messages.send(
+                user_id=user_id,
+                message="Привет! Я бот для знакомств в VK!",
+                random_id=random_id,
+                keyboard=self.get_keyboard()
+            )
+        except ApiError as e:
+            print(f"Ошибка при получении данных пользователя: {e}")
+            self.vk.messages.send(
+                user_id=user_id,
+                message="Не удалось получить ваши данные. Проверьте настройки приватности.",
+                random_id=random_id
+            )
 
     def get_keyboard(self):
         """
@@ -136,42 +164,6 @@ class VKBot:
             keyboard=self.get_keyboard()
         )
 
-    def favorites_handler(self, event):
-        """
-        Обработчик команды "избранные".
-        Отправляет список избранных пользователей.
-        """
-        user_id = event.object.message["from_id"]
-        session = SessionLocal()
-
-        try:
-            # Получаем список избранных из базы данных
-            favorites = session.query(FavoriteUser).filter(FavoriteUser.user_id == user_id).all()
-            if favorites:
-                message = "Ваши избранные:\n"
-                for favorite in favorites:
-                    partner_info = self.vk_u.users.get(user_ids=favorite.partner_id,
-                                                       fields="first_name,last_name,domain")
-                    message += f"{partner_info[0]['first_name']} {partner_info[0]['last_name']} (https://vk.com/{partner_info[0]['domain']})\n"
-            else:
-                message = "Ваш список избранных пуст."
-
-            # Отправляем сообщение
-            self.vk.messages.send(
-                user_id=user_id,
-                message=message,
-                random_id=random.randint(1, 2 ** 31),
-                keyboard=self.get_keyboard()
-            )
-        except Exception as e:
-            print(f"Ошибка при получении избранных: {e}")
-            self.vk.messages.send(
-                user_id=user_id,
-                message="Ошибка при получении списка избранных.",
-                random_id=random.randint(1, 2 ** 31)
-            )
-        finally:
-            session.close()
 
     @user_info_decorator(send_message=True)
     def user_info_handler(self, event):
@@ -207,8 +199,8 @@ class VKBot:
         """Обработчик кнопки 'В избранное'"""
         user_id = event.object.message["from_id"]
         if self.current_candidate:
-            # Добавляем пользователя в избранное (заглушка)
-            print(f"Пользователь {self.current_candidate['id']} добавлен в избранное.")
+            # Добавляем кандидата в избранное
+            self.db.add_to_favorites(user_id=user_id, favorite_user_id=self.current_candidate["id"])
             self.vk.messages.send(
                 user_id=user_id,
                 message="Пользователь добавлен в избранное!",
@@ -225,8 +217,8 @@ class VKBot:
         """Обработчик кнопки 'В черный список'"""
         user_id = event.object.message["from_id"]
         if self.current_candidate:
-            # Добавляем пользователя в черный список (заглушка)
-            print(f"Пользователь {self.current_candidate['id']} добавлен в черный список.")
+            # Добавляем кандидата в черный список
+            self.db.add_to_blacklist(user_id=user_id, blocked_user_id=self.current_candidate["id"])
             self.vk.messages.send(
                 user_id=user_id,
                 message="Пользователь добавлен в черный список!",
@@ -236,6 +228,36 @@ class VKBot:
             self.vk.messages.send(
                 user_id=user_id,
                 message="Ошибка: кандидат не найден.",
+                random_id=random.randint(1, 2 ** 31)
+            )
+
+    def favorites_handler(self, event):
+        """Обработчик команды 'избранные'"""
+        user_id = event.object.message["from_id"]
+        try:
+            # Получаем список избранных из базы данных
+            favorites = self.db.get_favorites(user_id)
+            if favorites:
+                message = "Ваши избранные:\n"
+                for favorite in favorites:
+                    partner_info = self.vk_u.users.get(user_ids=favorite.favorite_user_id,
+                                                       fields="first_name,last_name,domain")
+                    message += f"{partner_info[0]['first_name']} {partner_info[0]['last_name']} (https://vk.com/{partner_info[0]['domain']})\n"
+            else:
+                message = "Ваш список избранных пуст."
+
+            # Отправляем сообщение
+            self.vk.messages.send(
+                user_id=user_id,
+                message=message,
+                random_id=random.randint(1, 2 ** 31),
+                keyboard=self.get_keyboard()
+            )
+        except Exception as e:
+            print(f"Ошибка при получении избранных: {e}")
+            self.vk.messages.send(
+                user_id=user_id,
+                message="Ошибка при получении списка избранных.",
                 random_id=random.randint(1, 2 ** 31)
             )
 
@@ -308,12 +330,24 @@ class VKBot:
 
     def run(self):
         print("Bot is Running")
-        for event in self.vk_poll.listen():
-            if event.type == VkBotEventType.MESSAGE_NEW:
-                text = event.object.message["text"].lower()
-                if text in self.handlers:
-                    self.handlers[text](event)
+        try:
+            for event in self.vk_poll.listen():
+                if event.type == VkBotEventType.MESSAGE_NEW:
+                    text = event.object.message["text"].lower()
+                    if text in self.handlers:
+                        self.handlers[text](event)
+        finally:
+            self.db.close()  # Закрываем сессию при завершении работы бота
 
+    def _calculate_age(self, bdate: str) -> int:
+        """
+        Рассчитывает возраст по дате рождения.
+        """
+        if bdate and len(bdate.split(".")) == 3:
+            birth_year = int(bdate.split(".")[2])
+            current_year = datetime.now().year
+            return current_year - birth_year
+        return 25  # Значение по умолчанию, если дата рождения недоступна
 
 if __name__ == "__main__":
     bot = VKBot()
