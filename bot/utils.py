@@ -48,7 +48,6 @@ def search_users(vk_api_user, age: int, gender: int, city_name: str, count: int 
         print(f"Ошибка при поиске пользователей: {e}")
         return []
 
-
 def get_top_photos(vk_api_user, user_id: int, count: int = 3) -> List[str]:
     """
     Получает топовые фотографии пользователя.
@@ -93,7 +92,6 @@ def create_keyboard() -> dict:
     keyboard.add_button("Избранные", VkKeyboardColor.PRIMARY)
     return keyboard.get_keyboard()
 
-
 def send_user_info(vk_session, user_id: int, partner: Dict, photos: List[str]) -> None:
     """
     Отправляет информацию о найденном пользователе с фотографией и кнопками.
@@ -128,7 +126,6 @@ def send_user_info(vk_session, user_id: int, partner: Dict, photos: List[str]) -
         )
     except ApiError as e:
         print(f"Ошибка при отправке сообщения: {e}")
-
 
 def send_favorites(vk_session, user_id: int, session) -> None:
     """

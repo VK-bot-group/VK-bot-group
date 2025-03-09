@@ -8,37 +8,8 @@ from vk_api import ApiError
 from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
 from database.database import SessionLocal, init_db
 from bot.utils import search_users, get_top_photos, create_keyboard, send_user_info, send_favorites
-from database.models import FavoriteUser
+from database.models import FavoriteUser, User, BlackList
 from database.database_utils import DatabaseUtils
-
-
-def user_info_decorator(send_message: bool = True):
-    """
-    Декоратор для управления отправкой сообщения с информацией о пользователе.
-    :param send_message: Если True, отправляет сообщение с информацией о пользователе.
-    """
-    def decorator(func):
-        def wrapper(self, event, *args, **kwargs):
-            user_id = event.object.message["from_id"]
-            try:
-                # Получаем информацию о пользователе
-                user_info = self.vk_u.users.get(user_ids=user_id, fields="first_name, last_name, sex, bdate, city")
-                if send_message:
-                    sex = user_info[0]["sex"]
-                    message = f"Имя: {user_info[0]['first_name']} {user_info[0]['last_name']}\n"
-                    message += f"Пол: {'Мужской' if sex == 2 else 'Женский'}"
-                    self.vk.messages.send(
-                        user_id=user_id,
-                        message=message,
-                        random_id=random.randint(1, 2 ** 31),
-                        keyboard=self.get_keyboard()
-                    )
-                return user_info[0]  # Возвращаем данные пользователя
-            except vk_api.exceptions.ApiError as e:
-                print(f"Ошибка при получении данных пользователя: {e}")
-                return None
-        return wrapper
-    return decorator
 
 
 class VKBot:
@@ -64,7 +35,7 @@ class VKBot:
         self.handlers = {
             "начать": self.start_handler,
             "помощь": self.help_handler,
-            "me": self.user_info_handler,  # Отправляет сообщение
+            "я": self.user_info_handler,  # Отправляет сообщение
             "найти пару": self.find_partner_handler,
             "избранные": self.favorites_handler,
             "следующая": self.next_handler,
@@ -75,8 +46,8 @@ class VKBot:
         # Текущий кандидат
         self.current_candidate = None
 
-        # Смещение для поиска
-        self.search_offset = 0
+        # Смещение для поиска чтобы не попадались одинаковые часто
+        self.search_offset = 50
 
     def register_handler(self, command):
         """Декоратор для регистрации обработчиков."""
@@ -91,14 +62,6 @@ class VKBot:
             self.handlers[text](self, event)
         else:
             print(f"Неизвестная команда: {text}")
-
-    def run(self):
-        try:
-            for event in self.vk_poll.listen():
-                if event.type == VkEventType.MESSAGE_NEW and event.to_me:
-                    self.handle_message(event)
-        except Exception as e:
-            print(f"Произошла ошибка: {e}")
 
     def start_handler(self, event):
         """
@@ -164,14 +127,44 @@ class VKBot:
             keyboard=self.get_keyboard()
         )
 
-
-    @user_info_decorator(send_message=True)
     def user_info_handler(self, event):
         """
-        Обработчик команды "me".
-        Отправляет информацию о текущем пользователе.
+        Обработчик команды "я".
+        Отправляет информацию о текущем пользователе из базы данных.
         """
-        return self._get_user_info(event)
+        user_id = event.object.message["from_id"]
+        session = SessionLocal()
+
+        try:
+            # Получаем информацию о пользователе из базы данных
+            user = session.query(User).filter_by(user_id=user_id).first()
+            if user:
+                # Формируем сообщение
+                message = (
+                    f"Имя: {user.first_name} {user.last_name}\n"
+                    f"Пол: {'Мужской' if user.sex == 2 else 'Женский'}\n"
+                    f"Город: {user.city}\n"
+                    f"Возраст: {user.age}"
+                )
+            else:
+                message = "Ваши данные не найдены в базе данных."
+
+            # Отправляем сообщение
+            self.vk.messages.send(
+                user_id=user_id,
+                message=message,
+                random_id=random.randint(1, 2 ** 31),
+                keyboard=self.get_keyboard()
+            )
+        except Exception as e:
+            print(f"Ошибка при получении данных пользователя: {e}")
+            self.vk.messages.send(
+                user_id=user_id,
+                message="Ошибка при получении ваших данных.",
+                random_id=random.randint(1, 2 ** 31)
+            )
+        finally:
+            session.close()
 
     def _get_user_info(self, event):
         """
@@ -192,7 +185,7 @@ class VKBot:
         Увеличивает смещение и выполняет новый поиск.
         """
         user_id = event.object.message["from_id"]
-        self.search_offset += 1  # Увеличиваем смещение
+        self.search_offset += 50  # Увеличиваем смещение
         self.find_partner_handler(event)
 
     def add_to_favorites_handler(self, event):
@@ -264,50 +257,44 @@ class VKBot:
     def find_partner_handler(self, event):
         user_id = event.object.message["from_id"]
         session = SessionLocal()
-
         try:
-            # Получаем информацию о текущем пользователе (без отправки сообщения)
-            user_info = self._get_user_info(event)
-            if not user_info:
+            # Получаем информацию о пользователе из базы данных
+            user = session.query(User).filter_by(user_id=user_id).first()
+            if not user:
                 self.vk.messages.send(
                     user_id=user_id,
-                    message="Не удалось получить ваши данные. Проверьте настройки приватности.",
+                    message="Не удалось получить ваши данные. Добавьте информацию о себе.",
                     random_id=random.randint(1, 2 ** 31)
                 )
                 return
 
-            # Получаем возраст пользователя
-            bdate = user_info.get("bdate", "")
-            if bdate and len(bdate.split(".")) == 3:  # Проверяем, что дата рождения полная
-                birth_year = int(bdate.split(".")[2])
-                current_year = datetime.now().year
-                age = current_year - birth_year
-            else:
-                age = 25  # Значение по умолчанию, если дата рождения недоступна
-
-            # Получаем пол пользователя
-            sex = user_info.get("sex", 0)  # 1 — женский, 2 — мужской
+            age = user.age
+            sex = user.sex
             opposite_sex = 1 if sex == 2 else 2  # Ищем противоположный пол
-
-            # Получаем город пользователя
-            city = user_info.get("city", {})
-            city_name = city.get("title", "Москва")  # Значение по умолчанию, если город недоступен
+            city = user.city
 
             # Поиск кандидатов с использованием данных пользователя
-            candidates = search_users(self.vk_u, age=age, gender=opposite_sex, city_name=city_name,
+            candidates = search_users(self.vk_u, age=age, gender=opposite_sex, city_name=city,
                                       offset=self.search_offset)
 
             if candidates:
-                # Ищем первого открытого кандидата
+                # Ищем первого открытого кандидата, проверяя черный список
                 for candidate in candidates:
                     if not candidate.get("is_closed", True):
-                        self.current_candidate = candidate  # Сохраняем текущего кандидата
-                        top_photos = get_top_photos(self.vk_u, self.current_candidate["id"])
-                        if top_photos:  # Если фотографии доступны
-                            send_user_info(self.vk_session, user_id, self.current_candidate, top_photos)
-                            break
+                        # Проверяем, нет ли кандидата в черном списке
+                        in_blacklist = session.query(BlackList).filter_by(
+                            user_id=user_id,
+                            blocked_user_id=candidate["id"]
+                        ).first()
+
+                        if not in_blacklist:
+                            self.current_candidate = candidate  # Сохраняем текущего кандидата
+                            top_photos = get_top_photos(self.vk_u, self.current_candidate["id"])
+                            if top_photos:  # Если фотографии доступны
+                                send_user_info(self.vk_session, user_id, self.current_candidate, top_photos)
+                                break  # Прерываем цикл после первого подходящего кандидата
                 else:
-                    # Если все кандидаты закрыты
+                    # Если все кандидаты закрыты или в черном списке
                     self.vk.messages.send(
                         user_id=user_id,
                         message="Извините, подходящих кандидатов не найдено.",
@@ -324,7 +311,7 @@ class VKBot:
                 user_id=user_id,
                 message=f"Ошибка при поиске пары: {e}",
                 random_id=random.randint(1, 2 ** 31)
-        )
+            )
         finally:
             session.close()
 

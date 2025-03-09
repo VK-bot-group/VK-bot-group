@@ -7,8 +7,8 @@ class DatabaseUtils:
     def __init__(self):
         self.session: Session = SessionLocal()
 
-    def create_user(self, user_id: int, first_name: str, last_name: str, sex: int, city: str, profile_url: str,
-                    age: int):
+    def create_user(self, user_id: int, first_name: str, last_name: str,
+                    sex: int, city: str, profile_url: str, age: int):
         """
         Создает нового пользователя в базе данных, если его еще нет.
         """
@@ -34,30 +34,6 @@ class DatabaseUtils:
         """
         return self.session.query(User).filter(User.id == user_id).first()
 
-    def update_user(self, vk_id: int, **kwargs):
-        """
-        Обновляет данные пользователя.
-        """
-        user = self.get_user_by_vk_id(vk_id)
-        if user:
-            for key, value in kwargs.items():
-                setattr(user, key, value)
-            self.session.commit()
-            self.session.refresh(user)
-        return user
-
-    def delete_user(self, vk_id: int):
-        """
-        Удаляет пользователя из базы данных.
-        """
-        user = self.get_user_by_vk_id(vk_id)
-        if user:
-            self.session.delete(user)
-            self.session.commit()
-            return True
-        return False
-
-    # Методы для работы с избранными
     def add_to_favorites(self, user_id: int, favorite_user_id: int):
         """
         Добавляет пользователя в избранное.
@@ -84,7 +60,6 @@ class DatabaseUtils:
             return True
         return False
 
-    # Методы для работы с лайками
     def add_like(self, user_id: int, liked_user_id: int):
         """
         Добавляет лайк пользователю.
@@ -111,7 +86,6 @@ class DatabaseUtils:
             return True
         return False
 
-    # Методы для работы с черным списком
     def add_to_blacklist(self, user_id: int, blocked_user_id: int):
         """
         Добавляет пользователя в черный список.
