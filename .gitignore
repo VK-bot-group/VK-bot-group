@@ -4,4 +4,4 @@
 __pycache__/
 .vscode/
 config.py
-test.py
+test_main/
