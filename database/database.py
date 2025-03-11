@@ -16,6 +16,7 @@ Base = declarative_base()
 
 
 class User(Base):
+    """ Класс для таблицы users """
     __tablename__ = "users"
     user_id = Column(Integer, primary_key=True, index=True)
     first_name = Column(String)
@@ -28,6 +29,7 @@ class User(Base):
 
 
 class FavoriteUser(Base):
+    """ Класс для таблицы favorite_users """
     __tablename__ = "favorite_users"
     # Составной первичный ключ
     __table_args__ = (PrimaryKeyConstraint('user_id', 'favorite_user_id'),)
@@ -37,6 +39,7 @@ class FavoriteUser(Base):
 
 
 class BlackList(Base):
+    """ Класс для таблицы blacklist """
     __tablename__ = "blacklist"
     # Составной первичный ключ
     __table_args__ = (PrimaryKeyConstraint('user_id', 'blocked_user_id'),)
