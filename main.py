@@ -2,14 +2,13 @@ import random
 from datetime import datetime
 import vk_api
 import os
-from vk_api.longpoll import VkLongPoll, VkEventType
 from dotenv import load_dotenv
 from vk_api import ApiError
 from vk_api.bot_longpoll import VkBotLongPoll, VkBotEventType
-from database.database import SessionLocal, init_db
-from bot.utils import search_users, get_top_photos, create_keyboard, send_user_info, send_favorites
-from database.models import FavoriteUser, User, BlackList
+from database.database import User, BlackList, SessionLocal
 from database.database_utils import DatabaseUtils
+from typing import List, Dict
+from vk_api.keyboard import VkKeyboard, VkKeyboardColor
 
 
 class VKBot:
@@ -47,7 +46,7 @@ class VKBot:
         self.current_candidate = None
 
         # Смещение для поиска чтобы не попадались одинаковые часто
-        self.search_offset = 50
+        self.search_offset = 0
 
     def register_handler(self, command):
         """Декоратор для регистрации обработчиков."""
@@ -166,26 +165,13 @@ class VKBot:
         finally:
             session.close()
 
-    def _get_user_info(self, event):
-        """
-        Внутренний метод для получения информации о пользователе.
-        """
-        user_id = event.object.message["from_id"]
-        try:
-            # Получаем информацию о пользователе
-            user_info = self.vk_u.users.get(user_ids=user_id, fields="first_name, last_name, sex, bdate, city")
-            return user_info[0]  # Возвращаем данные пользователя
-        except vk_api.exceptions.ApiError as e:
-            print(f"Ошибка при получении данных пользователя: {e}")
-            return None
-
     def next_handler(self, event):
         """
         Обработчик кнопки "Следующая".
         Увеличивает смещение и выполняет новый поиск.
         """
         user_id = event.object.message["from_id"]
-        self.search_offset += 50  # Увеличиваем смещение
+        self.search_offset += 3  # Увеличиваем смещение
         self.find_partner_handler(event)
 
     def add_to_favorites_handler(self, event):
@@ -268,52 +254,138 @@ class VKBot:
                 )
                 return
 
-            age = user.age
-            sex = user.sex
-            opposite_sex = 1 if sex == 2 else 2  # Ищем противоположный пол
-            city = user.city
-
-            # Поиск кандидатов с использованием данных пользователя
-            candidates = search_users(self.vk_u, age=age, gender=opposite_sex, city_name=city,
-                                      offset=self.search_offset)
-
-            if candidates:
-                # Ищем первого открытого кандидата, проверяя черный список
-                for candidate in candidates:
-                    if not candidate.get("is_closed", True):
-                        # Проверяем, нет ли кандидата в черном списке
-                        in_blacklist = session.query(BlackList).filter_by(
-                            user_id=user_id,
-                            blocked_user_id=candidate["id"]
-                        ).first()
-
-                        if not in_blacklist:
-                            self.current_candidate = candidate  # Сохраняем текущего кандидата
-                            top_photos = get_top_photos(self.vk_u, self.current_candidate["id"])
-                            if top_photos:  # Если фотографии доступны
-                                send_user_info(self.vk_session, user_id, self.current_candidate, top_photos)
-                                break  # Прерываем цикл после первого подходящего кандидата
-                else:
-                    # Если все кандидаты закрыты или в черном списке
+            # Получаем ID города по его названию
+            try:
+                city_data = self.vk_u.database.getCities(
+                    q=user.city,  # Название города
+                    count=1  # Ограничиваем результат одним городом
+                )
+                if not city_data["items"]:
                     self.vk.messages.send(
                         user_id=user_id,
-                        message="Извините, подходящих кандидатов не найдено.",
+                        message=f"Город '{user.city}' не найден.",
                         random_id=random.randint(1, 2 ** 31)
                     )
-            else:
+                    return
+
+                city_id = city_data["items"][0]["id"]  # ID города
+
+                # Поиск пользователей
+                users = self.vk_u.users.search(
+                    age_from=user.age - 4,
+                    age_to=user.age + 4,
+                    sex=1 if user.sex == 2 else 2,  # Ищем противоположный пол
+                    city=city_id,  # Используем ID города
+                    has_photo=1,  # Только пользователи с фотографиями
+                    count=10,
+                    offset=self.search_offset,  # Смещение по списку
+                    fields="photo_max_orig,domain,sex,is_closed"  # Добавляем поле is_closed
+                )
+
+                # Фильтруем только открытые профили
+                open_users = [u for u in users["items"] if not u.get("is_closed", True)]
+
+                # Ищем первого подходящего кандидата
+                for candidate in open_users:
+                    # Проверяем, нет ли кандидата в черном списке
+                    in_blacklist = session.query(BlackList).filter_by(
+                        user_id=user_id,
+                        blocked_user_id=candidate["id"]
+                    ).first()
+
+                    if not in_blacklist:
+                        self.current_candidate = candidate  # Сохраняем текущего кандидата
+                        top_photos = self.get_top_photos(self.current_candidate["id"])
+                        if top_photos:  # Если фотографии доступны
+                            self.send_user_info(user_id, self.current_candidate, top_photos)
+                            return
+
+                # Если подходящие кандидаты не найдены
                 self.vk.messages.send(
                     user_id=user_id,
                     message="Извините, подходящих кандидатов не найдено.",
                     random_id=random.randint(1, 2 ** 31)
                 )
-        except ApiError as e:
+
+            except ApiError as e:
+                self.vk.messages.send(
+                    user_id=user_id,
+                    message=f"Ошибка при поиске пары: {e}",
+                    random_id=random.randint(1, 2 ** 31)
+                )
+
+        except Exception as e:
             self.vk.messages.send(
                 user_id=user_id,
-                message=f"Ошибка при поиске пары: {e}",
+                message=f"Произошла ошибка: {str(e)}",
                 random_id=random.randint(1, 2 ** 31)
             )
+
         finally:
             session.close()
+
+    def get_top_photos(self, user_id: int, count: int = 3) -> List[str]:
+        """
+        Получает топовые фотографии пользователя.
+        :param user_id: ID пользователя.
+        :param count: Количество фотографий.
+        :return: Список строк в формате "photo<owner_id>_<photo_id>".
+        """
+        try:
+            # Получаем фотографии пользователя
+            photos = self.vk_u.photos.get(
+                owner_id=user_id,
+                album_id="profile",  # Фотографии из профиля
+                extended=1,  # Дополнительные данные (лайки)
+                count=100  # Максимальное количество фотографий
+            )["items"]
+
+            # Сортируем фотографии по количеству лайков
+            photos.sort(key=lambda x: x["likes"]["count"], reverse=True)
+
+            # Формируем список вложений
+            attachments = []
+            for photo in photos[:count]:
+                photo_id = photo["id"]
+                owner_id = photo["owner_id"]
+                attachments.append(f"photo{owner_id}_{photo_id}")
+
+            return attachments
+        except ApiError as e:
+            print(f"Ошибка при получении фотографий: {e}")
+            return []
+
+    def send_user_info(self, user_id: int, partner: Dict, photos: List[str]) -> None:
+        """
+        Отправляет информацию о найденном пользователе с фотографией и кнопками.
+        :param user_id: ID пользователя, которому отправляется информация.
+        :param partner: Информация о найденном пользователе.
+        :param photos: Список вложений в формате "photo<owner_id>_<photo_id>".
+        """
+        # Формируем сообщение
+        message = (
+            f"Имя: {partner['first_name']} {partner['last_name']}\n"
+            f"Ссылка: https://vk.com/{partner['domain']}\n"
+        )
+
+        # Создаем клавиатуру с кнопками
+        keyboard = VkKeyboard(one_time=False)
+        keyboard.add_button("Следующая", VkKeyboardColor.PRIMARY)
+        keyboard.add_button("В избранное", VkKeyboardColor.POSITIVE)
+        keyboard.add_line()
+        keyboard.add_button("В черный список", VkKeyboardColor.NEGATIVE)
+
+        # Отправляем сообщение
+        try:
+            self.vk.messages.send(
+                user_id=user_id,
+                message=message,
+                attachment=",".join(photos),  # Прикрепляем фотографии
+                keyboard=keyboard.get_keyboard(),
+                random_id=random.randint(1, 2 ** 31)
+            )
+        except ApiError as e:
+            print(f"Ошибка при отправке сообщения: {e}")
 
     def run(self):
         print("Bot is Running")
